@@ -188,4 +188,21 @@ export interface SaveReviewRecordParams {
   status: string;
 }
 
+export interface AiConfigDto {
+  enabled: boolean;
+  authorized_at: string | null;
+  provider: string; // 'mock' | 'gemini'
+  model: string;
+  weekly_quota: number;
+  used_quota: number;
+  has_api_key: boolean;
+}
+
+export interface UpdateAiConfigParams {
+  enabled: boolean;
+  provider: string;
+  api_key?: string | null;
+  model?: string | null;
+}
+
 export type NavigationTab = 'recording' | 'entries' | 'reviews' | 'settings';

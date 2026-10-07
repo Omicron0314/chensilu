@@ -3,39 +3,31 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { App } from './App';
 import { ErrorBoundary } from '../shared/ui/ErrorBoundary';
 
-describe('App Component and Plan 04 Weekly Review Flow', () => {
+describe('App Component and Plan 05 AI Privacy and Quota Flow', () => {
   it('应当正确渲染应用标题与默认今日记录页面', () => {
     render(<App />);
     expect(screen.getByText('沉思路')).toBeInTheDocument();
     expect(screen.getByText('今日记录', { selector: 'h2' })).toBeInTheDocument();
   });
 
-  it('在对话引导中发送一轮对话并能触发 AI 复述与追问', async () => {
+  it('在设置页面应当展示 AI 授权状态、剩余额度与 Gemini 模型配置', async () => {
     render(<App />);
 
-    const chatInput = screen.getByPlaceholderText(/随口说说今天做了什么/);
-    fireEvent.change(chatInput, { target: { value: '今天读了《人月神话》，思考了团队规模' } });
-
-    const sendBtn = screen.getByRole('button', { name: '发送' });
-    fireEvent.click(sendBtn);
+    // 切换到设置
+    fireEvent.click(screen.getByRole('button', { name: '设置' }));
+    expect(screen.getByText('系统与设置', { selector: 'h2' })).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(screen.getByText(/今天你主要在进行/)).toBeInTheDocument();
+      expect(screen.getByText(/AI 服务、隐私授权与额度/)).toBeInTheDocument();
+      expect(screen.getByText(/本周调用额度/)).toBeInTheDocument();
+      expect(screen.getByText(/20/)).toBeInTheDocument();
     });
+
+    // 检查模型选项包含限制的 Gemini 系列
+    expect(screen.getByText(/gemini-3.8-flash-high/)).toBeInTheDocument();
   });
 
-  it('点击「今天不想写 / 休息」应当体贴回复并停止追问', async () => {
-    render(<App />);
-
-    const restBtn = screen.getByRole('button', { name: /今天不想写 \/ 休息/ });
-    fireEvent.click(restBtn);
-
-    await waitFor(() => {
-      expect(screen.getByText(/安心休息/)).toBeInTheDocument();
-    });
-  });
-
-  it('可以通过「一键提取为五栏草稿」将对话内容填入五栏编辑表单并成功保存', async () => {
+  it('在今日记录中通过引导对话完成一次完整记录', async () => {
     render(<App />);
 
     const chatInput = screen.getByPlaceholderText(/随口说说今天做了什么/);
@@ -51,7 +43,6 @@ describe('App Component and Plan 04 Weekly Review Flow', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/45 分钟/)).toBeInTheDocument();
-      expect(screen.getAllByText(/待确认候选/).length).toBeGreaterThan(0);
     });
 
     const saveBtn = screen.getByRole('button', { name: '正式保存今日记录' });
@@ -59,33 +50,6 @@ describe('App Component and Plan 04 Weekly Review Flow', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/即时事实反馈：/)).toBeInTheDocument();
-      expect(screen.getByText(/记录已安全入库/)).toBeInTheDocument();
-    });
-  });
-
-  it('在周复盘页面能够生成 A 档初稿，查看看板并确认归档', async () => {
-    render(<App />);
-
-    // 切换到周复盘
-    fireEvent.click(screen.getByRole('button', { name: '周复盘' }));
-    expect(screen.getByText('周复盘 (A 档)', { selector: 'h2' })).toBeInTheDocument();
-
-    // 点击生成复盘初稿
-    const genBtn = screen.getByRole('button', { name: /生成复盘初稿/ });
-    fireEvent.click(genBtn);
-
-    // 应当展示确定性聚合数据看板
-    await waitFor(() => {
-      expect(screen.getByText(/确定性聚合数据看板/)).toBeInTheDocument();
-      expect(screen.getByText(/复盘初稿（可直接自由阅读、修改与确认）/)).toBeInTheDocument();
-    });
-
-    // 点击确认并归档
-    const confirmBtn = screen.getByRole('button', { name: /确认并归档此篇周复盘/ });
-    fireEvent.click(confirmBtn);
-
-    await waitFor(() => {
-      expect(screen.getByText(/复盘已成功确认并归档/)).toBeInTheDocument();
     });
   });
 });

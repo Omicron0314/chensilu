@@ -14,6 +14,8 @@ import {
   SaveReviewRecordParams,
   ReviewRecordDto,
   ReviewStatsDto,
+  AiConfigDto,
+  UpdateAiConfigParams,
 } from '../contracts';
 
 declare global {
@@ -31,6 +33,15 @@ const memoryStore = {
   drafts: new Map<string, DraftDto>(),
   entries: new Map<string, EntryDto>(),
   reviews: new Map<string, ReviewRecordDto>(),
+  aiConfig: {
+    enabled: true,
+    authorized_at: new Date().toISOString(),
+    provider: 'mock',
+    model: 'gemini-3.8-flash-high',
+    weekly_quota: 20,
+    used_quota: 0,
+    has_api_key: false,
+  } as AiConfigDto,
 };
 
 export async function fetchAppStatus(): Promise<AppStatusDto> {
@@ -332,4 +343,29 @@ export async function listReviews(): Promise<ReviewRecordDto[]> {
   }
 
   return Array.from(memoryStore.reviews.values()).sort((a, b) => b.end_date.localeCompare(a.end_date));
+}
+
+export async function getAiConfig(): Promise<AiConfigDto> {
+  if (isTauriEnvironment()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return await invoke<AiConfigDto>('get_ai_config');
+  }
+
+  return { ...memoryStore.aiConfig };
+}
+
+export async function updateAiConfig(params: UpdateAiConfigParams): Promise<AiConfigDto> {
+  if (isTauriEnvironment()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return await invoke<AiConfigDto>('update_ai_config', { params });
+  }
+
+  memoryStore.aiConfig = {
+    ...memoryStore.aiConfig,
+    enabled: params.enabled,
+    provider: params.provider,
+    model: params.model || memoryStore.aiConfig.model,
+    has_api_key: Boolean(params.api_key) || memoryStore.aiConfig.has_api_key,
+  };
+  return { ...memoryStore.aiConfig };
 }
