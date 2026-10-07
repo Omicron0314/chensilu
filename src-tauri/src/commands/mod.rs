@@ -1,3 +1,4 @@
+pub mod storage;
 pub mod system;
 
 use serde::{Deserialize, Serialize};
@@ -9,6 +10,7 @@ pub struct AppStatusDto {
     pub os: String,
     pub storage_ready: bool,
     pub ai_ready: bool,
+    pub database_path: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

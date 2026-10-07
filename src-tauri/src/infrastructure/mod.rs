@@ -1,1 +1,1 @@
-//! 基础设施适配层（SQLite 仓储、文件导出/备份、AI 适配器、系统凭据）
+pub mod database;
