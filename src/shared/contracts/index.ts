@@ -64,6 +64,12 @@ export interface BackupResultDto {
   success: boolean;
 }
 
+export interface ExportResultDto {
+  file_path: string;
+  format: string;
+  content: string;
+}
+
 export interface AppStatusDto {
   app_name: string;
   version: string;

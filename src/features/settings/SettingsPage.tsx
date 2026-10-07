@@ -5,6 +5,8 @@ import {
   restoreDatabase,
   getAiConfig,
   updateAiConfig,
+  exportData,
+  clearAllData,
 } from '../../shared/desktop';
 import { AppStatusDto, AiConfigDto } from '../../shared/contracts';
 
@@ -15,6 +17,7 @@ export const SettingsPage: React.FC = () => {
 
   // 备份与恢复状态
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
+  const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(false);
 
   // AI 配置编辑状态
@@ -82,6 +85,39 @@ export const SettingsPage: React.FC = () => {
     } catch (e) {
       console.error('保存 AI 设置失败:', e);
       setAiFeedback('✗ 保存失败');
+    }
+  };
+
+  const handleExport = async (format: 'json' | 'markdown') => {
+    try {
+      setExportMessage(`正在导出 ${format.toUpperCase()} 文件...`);
+      const res = await exportData(format);
+      setExportMessage(`✓ 导出成功！文件已存至：${res.file_path}`);
+    } catch (e) {
+      console.error('导出失败:', e);
+      setExportMessage('✗ 导出失败。');
+    }
+  };
+
+  const handleClearAll = async () => {
+    const firstCheck = window.confirm(
+      '【严重警告】此操作将彻底删除本地数据库中所有的日记、行动、正反馈及周期复盘记录，且不可撤销！确定继续吗？'
+    );
+    if (!firstCheck) return;
+
+    const secondCheck = window.prompt('请在下方输入确认文字「确认清空」以执行删除：');
+    if (secondCheck !== '确认清空') {
+      alert('输入不匹配，已取消清空操作。');
+      return;
+    }
+
+    try {
+      await clearAllData();
+      alert('所有本地数据已彻底擦除！应用将重新加载。');
+      window.location.reload();
+    } catch (e) {
+      console.error('清空数据失败:', e);
+      alert('清空失败。');
     }
   };
 
@@ -311,11 +347,48 @@ export const SettingsPage: React.FC = () => {
         }}
       >
         <h3 style={{ margin: 0, fontSize: '1rem', color: '#1e293b' }}>
-          数据库一致性快照备份与恢复 (Plan 02 / Plan 06)
+          数据导出与备份快照 (Plan 02 / Plan 06)
         </h3>
         <p style={{ margin: 0, fontSize: '0.85rem', color: '#64748b' }}>
-          采用 SQLite Online Backup API 生成事务级热备份，自动执行 PRAGMA integrity_check 校验。
+          数据所有权完全属于您。支持随时导出完整结构化 JSON 或人类可读 Markdown，采用原子刷盘保护。
         </p>
+
+        {exportMessage && (
+          <div style={{ padding: '0.6rem 0.8rem', backgroundColor: '#e0f2fe', color: '#0369a1', borderRadius: '4px', fontSize: '0.85rem' }}>
+            {exportMessage}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <button
+            onClick={() => handleExport('json')}
+            style={{
+              padding: '0.45rem 0.9rem',
+              backgroundColor: '#0f172a',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '6px',
+              fontSize: '0.85rem',
+              cursor: 'pointer',
+            }}
+          >
+            导出完整数据 (JSON 格式)
+          </button>
+          <button
+            onClick={() => handleExport('markdown')}
+            style={{
+              padding: '0.45rem 0.9rem',
+              backgroundColor: '#334155',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '6px',
+              fontSize: '0.85rem',
+              cursor: 'pointer',
+            }}
+          >
+            导出为可读 Markdown 文本
+          </button>
+        </div>
 
         {backupMessage && (
           <div style={{ padding: '0.6rem 0.8rem', backgroundColor: '#e0f2fe', color: '#0369a1', borderRadius: '4px', fontSize: '0.85rem' }}>
@@ -327,7 +400,7 @@ export const SettingsPage: React.FC = () => {
           <button
             onClick={handleBackup}
             style={{
-              padding: '0.5rem 1rem',
+              padding: '0.45rem 0.9rem',
               backgroundColor: '#0284c7',
               color: '#fff',
               border: 'none',
@@ -337,13 +410,13 @@ export const SettingsPage: React.FC = () => {
               cursor: 'pointer',
             }}
           >
-            立即创建本地备份快照
+            立即创建本地热备份快照
           </button>
           <button
             onClick={handleRestore}
             disabled={restoring}
             style={{
-              padding: '0.5rem 1rem',
+              padding: '0.45rem 0.9rem',
               backgroundColor: '#fff',
               color: '#334155',
               border: '1px solid #cbd5e1',
@@ -353,6 +426,23 @@ export const SettingsPage: React.FC = () => {
             }}
           >
             {restoring ? '正在恢复...' : '从备份文件恢复'}
+          </button>
+        </div>
+
+        <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '0.75rem', marginTop: '0.5rem' }}>
+          <button
+            onClick={handleClearAll}
+            style={{
+              padding: '0.4rem 0.8rem',
+              backgroundColor: '#fee2e2',
+              color: '#b91c1c',
+              border: '1px solid #fca5a5',
+              borderRadius: '6px',
+              fontSize: '0.8rem',
+              cursor: 'pointer',
+            }}
+          >
+            ⚠️ 彻底清空所有本地数据
           </button>
         </div>
       </section>

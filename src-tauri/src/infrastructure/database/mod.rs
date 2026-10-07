@@ -220,6 +220,21 @@ impl Database {
         Ok(())
     }
 
+    pub fn clear_all_data(&self) -> Result<(), DomainError> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM actions", [])?;
+        tx.execute("DELETE FROM positive_facts", [])?;
+        tx.execute("DELETE FROM entries", [])?;
+        tx.execute("DELETE FROM drafts", [])?;
+        tx.execute("DELETE FROM reviews", [])?;
+        tx.commit()?;
+
+        // 回收释放空间
+        conn.execute("VACUUM", [])?;
+        Ok(())
+    }
+
     // ================= Entry 接口 =================
 
     pub fn save_entry(

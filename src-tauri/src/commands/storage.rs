@@ -38,6 +38,13 @@ pub struct BackupResultDto {
     pub success: bool,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ExportResultDto {
+    pub file_path: String,
+    pub format: String,
+    pub content: String,
+}
+
 #[tauri::command]
 pub fn save_draft(
     db: State<'_, Database>,
@@ -173,5 +180,58 @@ pub fn restore_database(
         message: e.to_string(),
     })?;
 
+    Ok(true)
+}
+
+#[tauri::command]
+pub fn export_data(
+    db: State<'_, Database>,
+    format: String,
+) -> Result<ExportResultDto, CommandError> {
+    use crate::infrastructure::files::export::ExportService;
+
+    let (content, ext) = if format == "markdown" {
+        (
+            ExportService::build_markdown_export(&db).map_err(|e| CommandError {
+                code: "EXPORT_FAILED".to_string(),
+                message: e.to_string(),
+            })?,
+            "md",
+        )
+    } else {
+        (
+            ExportService::build_json_export(&db).map_err(|e| CommandError {
+                code: "EXPORT_FAILED".to_string(),
+                message: e.to_string(),
+            })?,
+            "json",
+        )
+    };
+
+    let export_dir = dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("chensilu")
+        .join("exports");
+    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+    let target_path = export_dir.join(format!("chensilu_export_{}.{}", timestamp, ext));
+
+    ExportService::write_safely_to_file(&content, &target_path).map_err(|e| CommandError {
+        code: "EXPORT_WRITE_FAILED".to_string(),
+        message: e.to_string(),
+    })?;
+
+    Ok(ExportResultDto {
+        file_path: target_path.to_string_lossy().to_string(),
+        format,
+        content,
+    })
+}
+
+#[tauri::command]
+pub fn clear_all_data(db: State<'_, Database>) -> Result<bool, CommandError> {
+    db.clear_all_data().map_err(|e| CommandError {
+        code: "CLEAR_FAILED".to_string(),
+        message: e.to_string(),
+    })?;
     Ok(true)
 }

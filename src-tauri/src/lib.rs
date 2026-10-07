@@ -35,6 +35,8 @@ pub fn run() {
             commands::storage::delete_entry,
             commands::storage::backup_database,
             commands::storage::restore_database,
+            commands::storage::export_data,
+            commands::storage::clear_all_data,
             commands::ai::get_ai_config,
             commands::ai::update_ai_config,
             commands::ai::guided_chat,

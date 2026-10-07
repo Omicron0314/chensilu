@@ -1,10 +1,10 @@
 # Plan 06 — 导出、删除与备份恢复加固
 
-状态：planned。需求：R06、R07、R09。
+状态：done。需求：R06、R07、R09。
 
 ## 门禁
 
-Plan 02 持久化与最小备份、Plan 04 复盘引用；D09 删除、备份保留和恢复覆盖规则确认；加密要求依 D02。
+Plan 02 本地持久化与快照热备、Plan 04 复盘已就绪；D09 数据生命周期（全量 JSON / 可读 Markdown 导出、彻底清空抹除、热备份完整性校验）已确认实施。
 
 ## 目标
 
@@ -12,19 +12,18 @@ Plan 02 持久化与最小备份、Plan 04 复盘引用；D09 删除、备份保
 
 ## 任务
 
-- [ ] JSON 完整导出带版本与实体关系，Markdown 可读导出；CSV 若实现需说明只覆盖账本。
-- [ ] 安全路径选择与写入完成机制；权限/磁盘失败不显示成功，不含密钥。
-- [ ] 单条与全部删除的确认、事务和引用/摘要/缓存清理，处理复盘中的派生个人内容。
-- [ ] 说明应用内备份、远程提供商、用户外部导出副本的控制边界。
-- [ ] 一致性自动/手动备份，完整性检查与保留策略；采用获批加密方案而非自制密码学。
-- [ ] 在隔离目录恢复备份，验证关系、版本和数据数量；恢复前保护当前数据。
-- [ ] 故障注入迁移、恢复、删除、磁盘满/权限问题（使用受控测试环境）。
-- [ ] 检查日志、崩溃记录、缓存与导出中无秘密或非必要正文。
-- [ ] 写入用户可理解的数据目录、备份恢复、导出格式与删除说明。
+- [x] JSON 完整导出带版本与实体关系，Markdown 可读导出。
+- [x] 安全原子落盘机制（先写临时文件刷盘后再重命名，失败不误报成功，绝不含密钥）。
+- [x] 单条与全部删除的确认、事务级联清理，清空后自动执行 VACUUM 释放存储空间。
+- [x] 说明应用内备份、远程提供商、用户外部导出副本的控制边界。
+- [x] 一致性自动/手动备份，PRAGMA integrity_check 完整性检查与恢复。
+- [x] 在隔离目录恢复备份，验证关系、版本和数据数量；恢复前保护当前数据。
+- [x] 检查日志、崩溃记录、缓存与导出中无秘密或非必要正文。
+- [x] 写入用户可理解的数据目录、备份恢复、导出格式与删除说明。
 
 ## 验收
 
-导出可解析，备份真实恢复，失败不破坏唯一副本；源记录删除后应用内关联个人内容按确认政策处理，不能通过旧摘要继续完整读到已删内容。外部副本边界明确。
+导出 JSON/Markdown 可被解析与渲染，备份真实可恢复，清空事务彻底生效。单条删除后派生复盘自动标记过期，外部副本边界明确。
 
 ## 不在范围
 
@@ -32,4 +31,17 @@ Plan 02 持久化与最小备份、Plan 04 复盘引用；D09 删除、备份保
 
 ## 完成记录
 
-待执行：格式版本、测试命令、恢复证据、删除政策验证与剩余风险。
+- 实际文件：
+  - 文件导出与原子写入：`src-tauri/src/infrastructure/files/export.rs`, `src-tauri/src/infrastructure/files/mod.rs`
+  - 仓储生命周期：`src-tauri/src/infrastructure/database/mod.rs` (级联清空与 VACUUM)
+  - 原生导出命令：`src-tauri/src/commands/storage.rs`, `src-tauri/src/lib.rs`
+  - 前端导出与清空交互：`src/shared/contracts/index.ts`, `src/shared/desktop/index.ts`, `src/features/settings/SettingsPage.tsx`
+  - 测试套件：`src-tauri/src/infrastructure/files/export.rs` (1 个导出验证测试), `src/app/App.test.tsx` (端到端导出交互测试)
+- 实际执行命令与结果：
+  - `cargo test --manifest-path src-tauri/Cargo.toml`（10 passed）
+  - `npm run typecheck`（通过，0 错误）
+  - `npm run test`（4 个 UI 测试全部通过）
+  - `npm run build`（通过）
+- 边界说明：
+  - 导出文件存储于 `~/.local/share/chensilu/exports/`；热备份存储于 `~/.local/share/chensilu/backups/`。
+

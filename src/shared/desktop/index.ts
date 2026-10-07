@@ -1,6 +1,7 @@
 import {
   AppStatusDto,
   BackupResultDto,
+  ExportResultDto,
   DraftDto,
   EntryDto,
   SaveDraftParams,
@@ -177,6 +178,31 @@ export async function restoreDatabase(backupFilePath: string): Promise<boolean> 
     return await invoke<boolean>('restore_database', { backupFilePath });
   }
 
+  return true;
+}
+
+export async function exportData(format: 'json' | 'markdown'): Promise<ExportResultDto> {
+  if (isTauriEnvironment()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return await invoke<ExportResultDto>('export_data', { format });
+  }
+
+  return {
+    file_path: `/mock/exports/chensilu_export.${format === 'json' ? 'json' : 'md'}`,
+    format,
+    content: format === 'json' ? '{"entries":[]}' : '# 沉思路导出\n\n无记录',
+  };
+}
+
+export async function clearAllData(): Promise<boolean> {
+  if (isTauriEnvironment()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return await invoke<boolean>('clear_all_data');
+  }
+
+  memoryStore.drafts.clear();
+  memoryStore.entries.clear();
+  memoryStore.reviews.clear();
   return true;
 }
 
