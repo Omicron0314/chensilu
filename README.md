@@ -2,15 +2,54 @@
 
 面向 Linux、Windows、macOS 的桌面应用：以轻松对话完成当日记录，把目标、投入与用户确认的正反馈连接起来，再按需生成可回查的周期复盘。
 
-**当前状态：产品与工程规划阶段。尚无应用代码、可运行命令或安装包。技术栈未最终确认。**
+**当前状态：Plan 01 原生桌面骨架与质量基线已建立。**
 
-## 已确认方向
+## 技术栈与设计原则
 
-- 跨平台设计，先在 Linux 上开发、验证和打包。
-- 判断与反思属于用户本人，AI 只做启发与补全。
-- P0 跑通记录 → 五栏草稿 → 事实反馈 → 周复盘 A 档 → 导出删除的完整循环。
-- 记录、查看既有数据和基础导出不能受 AI 额度或会员限制。
-- 不确定的需求、技术选择与隐私边界先向用户确认。
+- **桌面底座**：Tauri 2 (Rust) + WebKitGTK (Linux)
+- **前端框架**：React 18 + TypeScript + Vite
+- **测试框架**：Vitest + Testing Library (前端) / Cargo Test (Rust)
+- **本地存储**：SQLite（Plan 02 接入）
+- **架构原则**：
+  - 本地优先：记录断网可用，数据保留在系统应用数据目录。
+  - 最小权限：前端禁止直接执行任意 SQL/Shell/文件路径。
+  - 隐私脱敏：错误边界与日志不记录日记正文或敏感凭据。
+
+## 开发环境准备 (Linux / Arch Linux)
+
+系统已具备以下原生依赖：
+- `rustc` >= 1.78 (`rustc 1.97.1`)
+- `node` >= 20 (`v26.10.0`)、`npm` (`12.2.0`)
+- `webkit2gtk-4.1`、`gtk3`、`libsoup3`
+
+在 Debian/Ubuntu 环境下对应的系统包：
+```bash
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl libssl-dev libgtk-3-dev
+```
+
+## 可用验证命令
+
+以下命令均已在 Arch Linux 实机测试通过：
+
+```bash
+# 1. 前端类型检查
+npm run typecheck
+
+# 2. 前端单元测试（UI 导航、状态、错误边界脱敏）
+npm run test
+
+# 3. 前端静态资源构建
+npm run build
+
+# 4. 原生后端单元测试（包含 get_app_status 桌面桥接）
+cargo test --manifest-path src-tauri/Cargo.toml
+
+# 5. 原生桌面调试构建
+cargo build --manifest-path src-tauri/Cargo.toml
+
+# 6. 启动 Tauri 开发环境
+npm run tauri dev
+```
 
 ## 文档入口
 
@@ -19,14 +58,6 @@
 - [文档导航](docs/README.md)
 - [项目结构与架构](docs/architecture.md)
 - [任务路线图与依赖](docs/plans/README.md)
-- [待确认决策](docs/decisions/0001-foundation.md)
+- [决策登记 (ADR)](docs/decisions/0001-foundation.md)
 
-根目录四份原始产品材料保留原位，工程文档只是其开发转译，不覆盖产品定义。
-
-## 开发与交付
-
-推荐评估 Tauri 2 + React + TypeScript + Vite + SQLite，尚待用户确认。先完成 [Plan 00](docs/plans/00-decisions.md)，再初始化工程。
-
-工程建立后补充真实的依赖版本、环境准备、运行、类型检查、测试、构建与 Linux 打包命令。现在不提供未经验证的命令。
-
-所有测试使用合成日记，真实日记、密钥、本地数据库和备份不得提交到 GitHub。仓库即使私有也不例外。
+所有测试均使用合成数据；真实日记、密钥、本地数据库与备份已由 `.gitignore` 排除，绝不提交至版本库。
