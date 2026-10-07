@@ -3,41 +3,62 @@ import {
   ActionDto,
   PositiveFactDto,
   PositiveFactStatus,
+  AiTone,
+  ChatMessage,
 } from '../../shared/contracts';
 import {
   getDraft,
   saveDraft,
   saveEntry,
   clearDraft,
+  guidedChat,
+  extractFiveColumns,
 } from '../../shared/desktop';
 
 export const RecordingPage: React.FC = () => {
   const todayStr = new Date().toISOString().split('T')[0];
   const [date, setDate] = useState<string>(todayStr);
+
+  // 输入模式：对话引导 vs 自由写
+  const [inputMode, setInputMode] = useState<'dialogue' | 'freeform'>('dialogue');
+  const [tone, setTone] = useState<AiTone>('gentle');
+
+  // 对话流状态
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    {
+      role: 'assistant',
+      content: '嗨！今天过得怎么样？发生了什么具体的事情吗？（随口说一两句即可，也可以随时跳过或选择休息）',
+    },
+  ]);
+  const [chatInput, setChatInput] = useState('');
+  const [aiReplying, setAiReplying] = useState(false);
+  const [canWrapUp, setCanWrapUp] = useState(false);
+
+  // 自由写原文 & 保存状态
   const [rawContent, setRawContent] = useState<string>('');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [lastSavedTime, setLastSavedTime] = useState<string>('');
 
-  // 五栏扩展项（支持自由写直接填写或后续 AI 提取）
+  // 五栏沉淀项
   const [goal, setGoal] = useState<string>('');
   const [statusCategory, setStatusCategory] = useState<string>('');
   const [actions, setActions] = useState<ActionDto[]>([]);
   const [positiveFacts, setPositiveFacts] = useState<PositiveFactDto[]>([]);
   const [reflection, setReflection] = useState<string>('');
 
-  // 临时新增行动/正反馈状态
+  // 行动/正反馈表单临时项
   const [newActionDesc, setNewActionDesc] = useState('');
   const [newActionMinutes, setNewActionMinutes] = useState<string>('');
   const [newActionApprox, setNewActionApprox] = useState(false);
   const [newFactDesc, setNewFactDesc] = useState('');
   const [newFactStatus, setNewFactStatus] = useState<PositiveFactStatus>('confirmed');
 
-  // 保存成功的即时事实反馈
+  // 即时事实反馈横幅
   const [immediateFeedback, setImmediateFeedback] = useState<string | null>(null);
 
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // 加载指定日期的草稿
+  // 加载指定日期草稿
   useEffect(() => {
     let active = true;
     getDraft(date).then((draft) => {
@@ -86,10 +107,97 @@ export const RecordingPage: React.FC = () => {
     [date]
   );
 
-  const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+  const handleFreeformChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     setRawContent(val);
     triggerAutoSaveDraft(val);
+  };
+
+  // 发送对话消息
+  const handleSendChatMessage = async (customText?: string) => {
+    const userText = customText !== undefined ? customText : chatInput.trim();
+    if (!userText || aiReplying) return;
+
+    const newHistory: ChatMessage[] = [...messages, { role: 'user', content: userText }];
+    setMessages(newHistory);
+    if (!customText) setChatInput('');
+    setAiReplying(true);
+
+    // 同步拼接进原文草稿
+    const accumulated = newHistory
+      .filter((m) => m.role === 'user')
+      .map((m) => m.content)
+      .join('\n');
+    setRawContent(accumulated);
+    triggerAutoSaveDraft(accumulated);
+
+    try {
+      const res = await guidedChat(newHistory, tone);
+      setMessages([...newHistory, { role: 'assistant', content: res.reply }]);
+      if (res.should_wrap_up) {
+        setCanWrapUp(true);
+      }
+    } catch (e) {
+      console.error('对话引导调用失败:', e);
+      setMessages([
+        ...newHistory,
+        { role: 'assistant', content: '（本地引导服务遇到小波动，您可以继续记录或直接点击整理为五栏）' },
+      ]);
+    } finally {
+      setAiReplying(false);
+    }
+  };
+
+  // “今天不想写 / 休息”
+  const handleRestDay = () => {
+    handleSendChatMessage('今天不想写了，有点累，想休息。');
+  };
+
+  // 从对话或原文自动提取五栏草稿
+  const handleExtractToFiveColumns = async () => {
+    const sourceText = rawContent.trim() || messages.filter((m) => m.role === 'user').map((m) => m.content).join('；');
+    if (!sourceText) {
+      alert('请先输入对话或文字内容，以便 AI 提取五栏。');
+      return;
+    }
+
+    try {
+      const extracted = await extractFiveColumns(sourceText);
+      if (extracted.goal) setGoal(extracted.goal);
+      if (extracted.status_category) setStatusCategory(extracted.status_category);
+
+      if (extracted.actions.length > 0) {
+        const newActions: ActionDto[] = extracted.actions.map((a, idx) => ({
+          id: `act-ai-${Date.now()}-${idx}`,
+          entry_id: '',
+          description: a.description,
+          goal_ref: a.goal_ref,
+          duration_minutes: a.duration_minutes,
+          is_approximate: a.is_approximate,
+          source_quote: a.source_quote,
+        }));
+        setActions(newActions);
+      }
+
+      if (extracted.positive_facts.length > 0) {
+        const newFacts: PositiveFactDto[] = extracted.positive_facts.map((f, idx) => ({
+          id: `fact-ai-${Date.now()}-${idx}`,
+          entry_id: '',
+          fact: f.fact,
+          status: 'unconfirmed',
+          goal_ref: f.goal_ref,
+          source_quote: f.source_quote,
+        }));
+        setPositiveFacts(newFacts);
+      }
+
+      if (extracted.reflection_prompt) {
+        setReflection(extracted.reflection_prompt);
+      }
+    } catch (e) {
+      console.error('五栏抽取失败:', e);
+      alert('抽取失败，已保留原输入。');
+    }
   };
 
   const handleAddAction = () => {
@@ -130,10 +238,11 @@ export const RecordingPage: React.FC = () => {
     setPositiveFacts(positiveFacts.filter((_, i) => i !== idx));
   };
 
-  // 提交并正式保存 Entry
+  // 正式保存 Entry
   const handleSaveFinalEntry = async () => {
-    if (!rawContent.trim() && actions.length === 0 && !reflection.trim()) {
-      alert('请先输入今天的日记内容或行动。');
+    const finalRaw = rawContent.trim() || messages.filter((m) => m.role === 'user').map((m) => m.content).join('\n');
+    if (!finalRaw && actions.length === 0 && !reflection.trim()) {
+      alert('请先输入日记内容或行动。');
       return;
     }
 
@@ -141,7 +250,7 @@ export const RecordingPage: React.FC = () => {
       setSaveStatus('saving');
       const entry = await saveEntry({
         date,
-        raw_content: rawContent || '(无原始自由文本，直接录入五栏)',
+        raw_content: finalRaw || '(用户直接保存五栏结构)',
         goal: goal.trim() || null,
         status_category: statusCategory.trim() || null,
         reflection: reflection.trim() || null,
@@ -149,53 +258,50 @@ export const RecordingPage: React.FC = () => {
         positive_facts: positiveFacts,
       });
 
-      // 计算事实反馈
-      const knownMinutes = entry.actions.reduce(
-        (acc, cur) => acc + (cur.duration_minutes || 0),
-        0
-      );
+      // 本地确定性事实计算（不依赖 LLM）
+      const knownMinutes = entry.actions.reduce((acc, cur) => acc + (cur.duration_minutes || 0), 0);
       const unknownCount = entry.actions.filter((a) => a.duration_minutes === null).length;
-      const confirmedFactsCount = entry.positive_facts.filter(
-        (f) => f.status === 'confirmed'
-      ).length;
+      const confirmedFactsCount = entry.positive_facts.filter((f) => f.status === 'confirmed').length;
 
-      let feedbackText = `记录已安全保存！今日记录了 ${entry.actions.length} 项行动`;
-      if (knownMinutes > 0) {
-        feedbackText += `，已知投入时长约 ${knownMinutes} 分钟`;
-      }
-      if (unknownCount > 0) {
-        feedbackText += `（包含 ${unknownCount} 项未标记时长的行动）`;
-      }
-      if (confirmedFactsCount > 0) {
-        feedbackText += `；确认了 ${confirmedFactsCount} 条正反馈事实`;
-      }
+      let feedbackText = `记录已安全入库！今日共记录 ${entry.actions.length} 项具体行动`;
+      if (knownMinutes > 0) feedbackText += `，投入已知时长约 ${knownMinutes} 分钟`;
+      if (unknownCount > 0) feedbackText += `（包含 ${unknownCount} 项未标记时长的行动）`;
+      if (confirmedFactsCount > 0) feedbackText += `；确认了 ${confirmedFactsCount} 项正反馈进展`;
       feedbackText += '。';
 
       setImmediateFeedback(feedbackText);
       setSaveStatus('saved');
 
-      // 重置表单但保留即时反馈
+      // 重置表单
       setRawContent('');
       setActions([]);
       setPositiveFacts([]);
       setGoal('');
       setStatusCategory('');
       setReflection('');
+      setMessages([
+        {
+          role: 'assistant',
+          content: '今天的记录已保存完毕！辛苦啦，明天见～',
+        },
+      ]);
+      setCanWrapUp(false);
       await clearDraft(date);
     } catch (e) {
-      console.error('正式记录保存失败:', e);
+      console.error('正式保存失败:', e);
       setSaveStatus('error');
-      alert('保存失败，请检查数据库状态。');
+      alert('保存失败，请检查数据库。');
     }
   };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', maxWidth: '880px' }}>
+      {/* 头部与日期 */}
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <h2 style={{ margin: '0 0 0.25rem 0', fontSize: '1.25rem' }}>今日记录</h2>
           <p style={{ margin: 0, color: '#666', fontSize: '0.85rem' }}>
-            随手记录发生过的事，不强迫填满所有栏目。时长可留空，正反馈可跳过。
+            先复述一句，再问一个具体问题。随口回答 2–3 轮即可结束，随时可跳过。
           </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -214,44 +320,101 @@ export const RecordingPage: React.FC = () => {
         </div>
       </header>
 
-      {/* 实时保存状态指示条 */}
+      {/* 状态与模式切换条 */}
       <div
         style={{
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          padding: '0.4rem 0.75rem',
+          padding: '0.5rem 0.75rem',
           backgroundColor: '#f8f9fa',
           border: '1px solid #e9ecef',
           borderRadius: '6px',
-          fontSize: '0.8rem',
-          color: '#666',
+          fontSize: '0.85rem',
         }}
       >
-        <span>
-          持久化状态：
-          {saveStatus === 'idle' && '未改动'}
-          {saveStatus === 'saving' && <strong style={{ color: '#0066cc' }}> 正在保存草稿...</strong>}
-          {saveStatus === 'saved' && (
-            <span style={{ color: '#2e7d32' }}>
-              {' '}✓ 草稿已保存 {lastSavedTime ? `(${lastSavedTime})` : ''}
-            </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <div style={{ display: 'flex', gap: '0.25rem', backgroundColor: '#e2e8f0', padding: '2px', borderRadius: '4px' }}>
+            <button
+              onClick={() => setInputMode('dialogue')}
+              style={{
+                border: 'none',
+                padding: '0.3rem 0.6rem',
+                borderRadius: '3px',
+                fontSize: '0.8rem',
+                backgroundColor: inputMode === 'dialogue' ? '#ffffff' : 'transparent',
+                fontWeight: inputMode === 'dialogue' ? 600 : 400,
+                cursor: 'pointer',
+              }}
+            >
+              💬 对话引导
+            </button>
+            <button
+              onClick={() => setInputMode('freeform')}
+              style={{
+                border: 'none',
+                padding: '0.3rem 0.6rem',
+                borderRadius: '3px',
+                fontSize: '0.8rem',
+                backgroundColor: inputMode === 'freeform' ? '#ffffff' : 'transparent',
+                fontWeight: inputMode === 'freeform' ? 600 : 400,
+                cursor: 'pointer',
+              }}
+            >
+              ✍️ 自由书写
+            </button>
+          </div>
+
+          {inputMode === 'dialogue' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.8rem', color: '#64748b' }}>
+              <span>口吻：</span>
+              <button
+                onClick={() => setTone('gentle')}
+                style={{
+                  border: '1px solid #cbd5e1',
+                  background: tone === 'gentle' ? '#dbeafe' : '#fff',
+                  color: tone === 'gentle' ? '#1d4ed8' : '#475569',
+                  borderRadius: '3px',
+                  padding: '0.15rem 0.4rem',
+                  cursor: 'pointer',
+                }}
+              >
+                温和
+              </button>
+              <button
+                onClick={() => setTone('direct')}
+                style={{
+                  border: '1px solid #cbd5e1',
+                  background: tone === 'direct' ? '#dbeafe' : '#fff',
+                  color: tone === 'direct' ? '#1d4ed8' : '#475569',
+                  borderRadius: '3px',
+                  padding: '0.15rem 0.4rem',
+                  cursor: 'pointer',
+                }}
+              >
+                直接
+              </button>
+            </div>
           )}
-          {saveStatus === 'error' && <span style={{ color: '#c00' }}> ✗ 保存失败</span>}
+        </div>
+
+        <span style={{ color: '#666', fontSize: '0.8rem' }}>
+          {saveStatus === 'saving' && <strong style={{ color: '#0284c7' }}>正在保存草稿...</strong>}
+          {saveStatus === 'saved' && <span style={{ color: '#16a34a' }}>✓ 本地草稿已保存 {lastSavedTime ? `(${lastSavedTime})` : ''}</span>}
+          {saveStatus === 'idle' && '未改动'}
         </span>
-        <span style={{ color: '#888' }}>本地 SQLite 事务保护 · 断网自动保存</span>
       </div>
 
-      {/* 成功后的即时事实反馈横幅 */}
+      {/* 即时事实反馈横幅 */}
       {immediateFeedback && (
         <div
           style={{
-            padding: '0.85rem 1rem',
+            padding: '0.75rem 1rem',
             backgroundColor: '#f0fdf4',
             border: '1px solid #bbf7d0',
             borderRadius: '6px',
             color: '#166534',
-            fontSize: '0.9rem',
+            fontSize: '0.85rem',
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
@@ -263,51 +426,195 @@ export const RecordingPage: React.FC = () => {
           </div>
           <button
             onClick={() => setImmediateFeedback(null)}
-            style={{
-              background: 'none',
-              border: 'none',
-              cursor: 'pointer',
-              color: '#166534',
-              fontWeight: 'bold',
-            }}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#166534', fontWeight: 'bold' }}
           >
             ✕
           </button>
         </div>
       )}
 
-      {/* 自由写与原始输入区 */}
-      <section
-        style={{
-          border: '1px solid #e2e8f0',
-          borderRadius: '8px',
-          padding: '1rem',
-          backgroundColor: '#ffffff',
-        }}
-      >
-        <label style={{ display: 'block', fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>
-          自由记录 / 原始文本（AI 不会覆盖此原文）
-        </label>
-        <textarea
-          value={rawContent}
-          onChange={handleTextChange}
-          placeholder="今天做了什么？遇到了什么事情或进展？（随心输入，哪怕一两句话也可以保存）"
-          rows={5}
+      {/* 录入工作区 */}
+      {inputMode === 'dialogue' ? (
+        <section
           style={{
-            width: '100%',
-            padding: '0.75rem',
-            borderRadius: '4px',
-            border: '1px solid #cbd5e1',
-            boxSizing: 'border-box',
-            fontFamily: 'inherit',
-            fontSize: '0.95rem',
-            lineHeight: 1.5,
-            resize: 'vertical',
+            border: '1px solid #e2e8f0',
+            borderRadius: '8px',
+            padding: '1rem',
+            backgroundColor: '#ffffff',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.75rem',
           }}
-        />
-      </section>
+        >
+          {/* 气泡列表 */}
+          <div
+            style={{
+              maxHeight: '300px',
+              overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.75rem',
+              padding: '0.5rem 0',
+            }}
+          >
+            {messages.map((m, idx) => {
+              const isUser = m.role === 'user';
+              return (
+                <div
+                  key={idx}
+                  style={{
+                    alignSelf: isUser ? 'flex-end' : 'flex-start',
+                    maxWidth: '85%',
+                    backgroundColor: isUser ? '#0f172a' : '#f1f5f9',
+                    color: isUser ? '#ffffff' : '#1e293b',
+                    padding: '0.6rem 0.85rem',
+                    borderRadius: isUser ? '12px 12px 2px 12px' : '12px 12px 12px 2px',
+                    fontSize: '0.9rem',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {m.content}
+                </div>
+              );
+            })}
+            {aiReplying && (
+              <div style={{ alignSelf: 'flex-start', color: '#64748b', fontSize: '0.85rem', fontStyle: 'italic' }}>
+                AI 正在梳理中...
+              </div>
+            )}
+          </div>
 
-      {/* 五栏结构化沉淀（不卡保存，支持逐项补充或跳过） */}
+          {/* 输入框与快捷动作 */}
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <input
+              type="text"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSendChatMessage();
+                }
+              }}
+              placeholder="随口说说今天做了什么（按 Enter 发送）..."
+              style={{ flex: 1, padding: '0.5rem 0.75rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+            />
+            <button
+              onClick={() => handleSendChatMessage()}
+              disabled={aiReplying || !chatInput.trim()}
+              style={{
+                padding: '0.5rem 1rem',
+                backgroundColor: '#0f172a',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              发送
+            </button>
+          </div>
+
+          {/* 对话引导快捷控制按钮 */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.25rem' }}>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button
+                onClick={handleRestDay}
+                style={{
+                  background: 'none',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '4px',
+                  padding: '0.3rem 0.6rem',
+                  fontSize: '0.8rem',
+                  color: '#64748b',
+                  cursor: 'pointer',
+                }}
+              >
+                💤 今天不想写 / 休息
+              </button>
+              <button
+                onClick={() => setInputMode('freeform')}
+                style={{
+                  background: 'none',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '4px',
+                  padding: '0.3rem 0.6rem',
+                  fontSize: '0.8rem',
+                  color: '#64748b',
+                  cursor: 'pointer',
+                }}
+              >
+                跳过对话转自由写
+              </button>
+            </div>
+
+            <button
+              onClick={handleExtractToFiveColumns}
+              style={{
+                padding: '0.4rem 0.8rem',
+                backgroundColor: canWrapUp ? '#16a34a' : '#0284c7',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '4px',
+                fontSize: '0.85rem',
+                fontWeight: 500,
+                cursor: 'pointer',
+              }}
+            >
+              ⚡ 一键提取为五栏草稿 ↓
+            </button>
+          </div>
+        </section>
+      ) : (
+        <section
+          style={{
+            border: '1px solid #e2e8f0',
+            borderRadius: '8px',
+            padding: '1rem',
+            backgroundColor: '#ffffff',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+            <label style={{ fontWeight: 600, fontSize: '0.9rem' }}>
+              自由记录文本（不限制格式，支持长文本）
+            </label>
+            <button
+              onClick={handleExtractToFiveColumns}
+              style={{
+                background: '#0284c7',
+                color: '#fff',
+                border: 'none',
+                padding: '0.2rem 0.6rem',
+                borderRadius: '4px',
+                fontSize: '0.8rem',
+                cursor: 'pointer',
+              }}
+            >
+              从自由文本提取五栏 ↓
+            </button>
+          </div>
+          <textarea
+            value={rawContent}
+            onChange={handleFreeformChange}
+            placeholder="今天发生了什么？（支持随心记录，草稿实时自动防抖保存）"
+            rows={5}
+            style={{
+              width: '100%',
+              padding: '0.75rem',
+              borderRadius: '4px',
+              border: '1px solid #cbd5e1',
+              boxSizing: 'border-box',
+              fontFamily: 'inherit',
+              fontSize: '0.95rem',
+              lineHeight: 1.5,
+              resize: 'vertical',
+            }}
+          />
+        </section>
+      )}
+
+      {/* 五栏沉淀与编辑区 */}
       <section
         style={{
           border: '1px solid #e2e8f0',
@@ -319,24 +626,28 @@ export const RecordingPage: React.FC = () => {
           gap: '1rem',
         }}
       >
-        <h3 style={{ margin: 0, fontSize: '1rem', color: '#1e293b' }}>
-          五栏沉淀（目标 · 状态 · 投入行动 · 正反馈 · 反思）
-        </h3>
-        <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b' }}>
-          结构化便于机器周报聚合。所有字段均可空，绝不因未填而阻断保存。
-        </p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: '1rem', color: '#1e293b' }}>
+              五栏沉淀（目标 · 状态 · 投入行动 · 正反馈 · 反思）
+            </h3>
+            <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b' }}>
+              结构化便于机器周报聚合。所有字段均可编辑、可空缺，绝不阻断保存。
+            </p>
+          </div>
+        </div>
 
         {/* 1. 目标 & 2. 状态 */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
           <div>
             <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 500, marginBottom: '0.25rem' }}>
-              ① 关联目标（可留空）
+              ① 目标对齐（可空）
             </label>
             <input
               type="text"
               value={goal}
               onChange={(e) => setGoal(e.target.value)}
-              placeholder="例：提升工程架构能力 / 备考 CET6"
+              placeholder="例：沉思路开发 / 备考 CET6"
               style={{ width: '100%', padding: '0.4rem 0.6rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
             />
           </div>
@@ -348,7 +659,7 @@ export const RecordingPage: React.FC = () => {
               type="text"
               value={statusCategory}
               onChange={(e) => setStatusCategory(e.target.value)}
-              placeholder="例：专注、疲惫、平稳（禁止量化评分）"
+              placeholder="例：专注、平稳、疲惫恢复"
               style={{ width: '100%', padding: '0.4rem 0.6rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
             />
           </div>
@@ -357,7 +668,7 @@ export const RecordingPage: React.FC = () => {
         {/* 3. 时间投入的具体行动 */}
         <div>
           <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 500, marginBottom: '0.25rem' }}>
-            ③ 时间投入的具体行动（核心可聚合项，未知时长可留空）
+            ③ 时间投入的具体行动（核心统计项，未知时长请留空）
           </label>
           {actions.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginBottom: '0.5rem' }}>
@@ -397,7 +708,7 @@ export const RecordingPage: React.FC = () => {
               type="text"
               value={newActionDesc}
               onChange={(e) => setNewActionDesc(e.target.value)}
-              placeholder="行动描述（如：编写 Tauri 原生测试）"
+              placeholder="行动描述（如：编写 Plan 03 测试）"
               style={{ flex: 2, padding: '0.4rem 0.6rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
             />
             <input
@@ -433,10 +744,10 @@ export const RecordingPage: React.FC = () => {
           </div>
         </div>
 
-        {/* 4. 正反馈事实 */}
+        {/* 4. 正反馈 */}
         <div>
           <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 500, marginBottom: '0.25rem' }}>
-            ④ 正反馈（只存用户认可的事实；可确认、跳过或明确今天没有）
+            ④ 正反馈（只存用户认可的事实；可确认、跳过或明确没有）
           </label>
           {positiveFacts.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginBottom: '0.5rem' }}>
@@ -457,7 +768,7 @@ export const RecordingPage: React.FC = () => {
                   <div>
                     <span>• {fact.fact}</span>
                     <span style={{ color: '#16a34a', marginLeft: '0.5rem' }}>
-                      ({fact.status === 'confirmed' ? '已确认' : fact.status === 'none' ? '明确没有' : fact.status === 'skipped' ? '已跳过' : '待确认'})
+                      ({fact.status === 'confirmed' ? '已确认' : fact.status === 'none' ? '明确没有' : fact.status === 'skipped' ? '已跳过' : '待确认候选'})
                     </span>
                   </div>
                   <button
@@ -510,19 +821,19 @@ export const RecordingPage: React.FC = () => {
         {/* 5. 反思 */}
         <div>
           <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 500, marginBottom: '0.25rem' }}>
-            ⑤ 反思（全场最轻一栏：自由文本，不设字数与完成率）
+            ⑤ 反思（全场最轻一栏：AI 仅递引子，由用户自由写或留空）
           </label>
           <input
             type="text"
             value={reflection}
             onChange={(e) => setReflection(e.target.value)}
-            placeholder="今天有什么值得一想的体会或值得改进的微小点？（可留空）"
+            placeholder="今天有什么体会或值得微调的点？（可留空）"
             style={{ width: '100%', padding: '0.4rem 0.6rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
           />
         </div>
       </section>
 
-      {/* 底部保存按钮 */}
+      {/* 底部保存条 */}
       <footer style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
         <button
           onClick={handleSaveFinalEntry}

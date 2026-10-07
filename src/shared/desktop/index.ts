@@ -5,6 +5,10 @@ import {
   EntryDto,
   SaveDraftParams,
   SaveEntryParams,
+  AiTone,
+  ChatMessage,
+  GuidedTurnResult,
+  ExtractedDraftResult,
 } from '../contracts';
 
 declare global {
@@ -157,4 +161,72 @@ export async function restoreDatabase(backupFilePath: string): Promise<boolean> 
   }
 
   return true;
+}
+
+export async function guidedChat(history: ChatMessage[], tone: AiTone): Promise<GuidedTurnResult> {
+  if (isTauriEnvironment()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return await invoke<GuidedTurnResult>('guided_chat', { params: { history, tone } });
+  }
+
+  const lastUser = [...history].reverse().find((m) => m.role === 'user')?.content.trim() || '';
+  if (lastUser.includes('不想写') || lastUser.includes('休息') || lastUser.includes('跳过')) {
+    return {
+      reply: tone === 'gentle' ? '收到啦，今天就安心休息吧！成长允许停顿，不写日记也很棒。' : '明白。今天停止记录，好好休息。',
+      should_wrap_up: true,
+      is_rest_day: true,
+    };
+  }
+
+  const userTurns = history.filter((m) => m.role === 'user').length;
+  if (userTurns >= 2) {
+    return {
+      reply: tone === 'gentle'
+        ? `听起来今天很有节奏。你提到了「${lastUser.slice(0, 20)}」，信息已经很充分啦，我们可以整理为五栏沉淀啦。`
+        : `已记录：「${lastUser.slice(0, 20)}」。信息已充分，可点击下方生成五栏草稿。`,
+      should_wrap_up: true,
+      is_rest_day: false,
+    };
+  }
+
+  return {
+    reply: tone === 'gentle'
+      ? `今天你主要在进行「${lastUser.slice(0, 24)}」。大概花了多少时间呢？（随口说个大概即可，不确定可留空）`
+      : `已记录：「${lastUser.slice(0, 24)}」。今天在这项行动上大概投入了多久？`,
+    should_wrap_up: false,
+    is_rest_day: false,
+  };
+}
+
+export async function extractFiveColumns(rawText: string): Promise<ExtractedDraftResult> {
+  if (isTauriEnvironment()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return await invoke<ExtractedDraftResult>('extract_five_columns', { params: { raw_text: rawText } });
+  }
+
+  // 纯前端环境下的降级抽取
+  const isApprox = rawText.includes('约') || rawText.includes('大概') || rawText.includes('差不多');
+  let minutes: number | null = null;
+  const match = rawText.match(/(\d+)\s*(?:分钟|min)/);
+  if (match) {
+    minutes = parseInt(match[1], 10);
+  }
+
+  return {
+    goal: rawText.includes('沉思路') || rawText.includes('开发') ? '沉思路开发' : null,
+    status_category: rawText.includes('累') ? '疲劳恢复' : '平稳推进',
+    actions: [
+      {
+        description: rawText.slice(0, 60),
+        goal_ref: rawText.includes('开发') ? '沉思路开发' : null,
+        duration_minutes: minutes,
+        is_approximate: isApprox,
+        source_quote: rawText.slice(0, 40),
+      },
+    ],
+    positive_facts: rawText.includes('完成') || rawText.includes('通过')
+      ? [{ fact: `今天落实了：${rawText.slice(0, 30)}`, status: 'unconfirmed', goal_ref: null, source_quote: rawText.slice(0, 30) }]
+      : [],
+    reflection_prompt: '回想今天的过程，有什么细节让你觉得顺畅或值得优化？',
+  };
 }

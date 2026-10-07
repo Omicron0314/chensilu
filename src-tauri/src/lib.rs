@@ -4,6 +4,7 @@ pub mod domain;
 pub mod infrastructure;
 
 use std::path::PathBuf;
+use commands::ai::AiService;
 use infrastructure::database::Database;
 
 fn resolve_default_db_path() -> PathBuf {
@@ -18,9 +19,11 @@ pub fn run() {
     let db_path = resolve_default_db_path();
     let database = Database::new(db_path)
         .expect("初始化本地 SQLite 数据库仓储失败");
+    let ai_service = AiService::new();
 
     tauri::Builder::default()
         .manage(database)
+        .manage(ai_service)
         .invoke_handler(tauri::generate_handler![
             commands::system::get_app_status,
             commands::storage::save_draft,
@@ -32,6 +35,8 @@ pub fn run() {
             commands::storage::delete_entry,
             commands::storage::backup_database,
             commands::storage::restore_database,
+            commands::ai::guided_chat,
+            commands::ai::extract_five_columns,
         ])
         .run(tauri::generate_context!())
         .expect("运行 Tauri 桌面应用时发生错误");

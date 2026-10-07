@@ -78,4 +78,40 @@ export interface CommandError {
   message: string;
 }
 
+export type AiTone = 'gentle' | 'direct';
+
+export interface ChatMessage {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+}
+
+export interface GuidedTurnResult {
+  reply: string;
+  should_wrap_up: boolean;
+  is_rest_day: boolean;
+}
+
+export interface ExtractedActionDraft {
+  description: string;
+  goal_ref?: string | null;
+  duration_minutes: number | null;
+  is_approximate: boolean;
+  source_quote?: string | null;
+}
+
+export interface ExtractedPositiveFactDraft {
+  fact: string;
+  status: string;
+  goal_ref?: string | null;
+  source_quote?: string | null;
+}
+
+export interface ExtractedDraftResult {
+  goal?: string | null;
+  status_category?: string | null;
+  actions: ExtractedActionDraft[];
+  positive_facts: ExtractedPositiveFactDraft[];
+  reflection_prompt?: string | null;
+}
+
 export type NavigationTab = 'recording' | 'entries' | 'reviews' | 'settings';
