@@ -9,6 +9,11 @@ import {
   ChatMessage,
   GuidedTurnResult,
   ExtractedDraftResult,
+  GenerateReviewDraftParams,
+  ReviewDraftDto,
+  SaveReviewRecordParams,
+  ReviewRecordDto,
+  ReviewStatsDto,
 } from '../contracts';
 
 declare global {
@@ -21,10 +26,11 @@ export const isTauriEnvironment = (): boolean => {
   return typeof window !== 'undefined' && Boolean(window.__TAURI_INTERNALS__);
 };
 
-// 内存降级仓储（用于纯 Web 预览与单元测试环境）
+// 内存降级仓储（用于单元测试与纯前端环境）
 const memoryStore = {
   drafts: new Map<string, DraftDto>(),
   entries: new Map<string, EntryDto>(),
+  reviews: new Map<string, ReviewRecordDto>(),
 };
 
 export async function fetchAppStatus(): Promise<AppStatusDto> {
@@ -204,7 +210,6 @@ export async function extractFiveColumns(rawText: string): Promise<ExtractedDraf
     return await invoke<ExtractedDraftResult>('extract_five_columns', { params: { raw_text: rawText } });
   }
 
-  // 纯前端环境下的降级抽取
   const isApprox = rawText.includes('约') || rawText.includes('大概') || rawText.includes('差不多');
   let minutes: number | null = null;
   const match = rawText.match(/(\d+)\s*(?:分钟|min)/);
@@ -229,4 +234,102 @@ export async function extractFiveColumns(rawText: string): Promise<ExtractedDraf
       : [],
     reflection_prompt: '回想今天的过程，有什么细节让你觉得顺畅或值得优化？',
   };
+}
+
+// ============ 周复盘接口 ============
+
+export async function generateReviewDraft(params: GenerateReviewDraftParams): Promise<ReviewDraftDto> {
+  if (isTauriEnvironment()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return await invoke<ReviewDraftDto>('generate_review_draft', { params });
+  }
+
+  // 纯前端环境下的降级聚合计算
+  const matchingEntries = Array.from(memoryStore.entries.values()).filter(
+    (e) => e.date >= params.start_date && e.date <= params.end_date
+  );
+
+  let totalActions = 0;
+  let totalKnownMinutes = 0;
+  let unknownCount = 0;
+  let approxCount = 0;
+  const confirmedFacts: any[] = [];
+  const reflections: any[] = [];
+
+  for (const e of matchingEntries) {
+    for (const a of e.actions) {
+      totalActions += 1;
+      if (a.duration_minutes !== null) {
+        totalKnownMinutes += a.duration_minutes;
+      } else {
+        unknownCount += 1;
+      }
+      if (a.is_approximate) approxCount += 1;
+    }
+
+    for (const f of e.positive_facts) {
+      if (f.status === 'confirmed') {
+        confirmedFacts.push({ fact_id: f.id, entry_id: e.id, date: e.date, fact: f.fact, goal_ref: f.goal_ref });
+      }
+    }
+
+    if (e.reflection?.trim()) {
+      reflections.push({ entry_id: e.id, date: e.date, snippet: e.reflection });
+    }
+  }
+
+  const stats: ReviewStatsDto = {
+    total_entries_count: matchingEntries.length,
+    total_actions_count: totalActions,
+    total_known_minutes: totalKnownMinutes,
+    unknown_duration_actions_count: unknownCount,
+    approximate_actions_count: approxCount,
+    goals_breakdown: [
+      { goal_name: '沉思路开发', action_count: totalActions, known_duration_minutes: totalKnownMinutes, unknown_duration_count: unknownCount },
+    ],
+    confirmed_facts_count: confirmedFacts.length,
+    confirmed_facts: confirmedFacts,
+    reflections_summary: reflections,
+  };
+
+  const narrative = `### 本周成长复盘（${params.start_date} ~ ${params.end_date}）\n\n**行动投入账本**：累计 ${stats.total_entries_count} 篇日记、${stats.total_actions_count} 项行动。已知时间投入 ${stats.total_known_minutes} 分钟。\n\n**确认正反馈**：共 ${stats.confirmed_facts_count} 项。`;
+
+  return {
+    start_date: params.start_date,
+    end_date: params.end_date,
+    stats,
+    narrative,
+    citations: confirmedFacts.map((f) => ({ entry_id: f.entry_id, date: f.date, quote: f.fact })),
+  };
+}
+
+export async function saveReviewRecord(params: SaveReviewRecordParams): Promise<ReviewRecordDto> {
+  if (isTauriEnvironment()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return await invoke<ReviewRecordDto>('save_review_record', { params });
+  }
+
+  const now = new Date().toISOString();
+  const id = params.id || `rev-${Date.now()}`;
+  const record: ReviewRecordDto = {
+    id,
+    start_date: params.start_date,
+    end_date: params.end_date,
+    narrative: params.narrative,
+    stats: JSON.parse(params.stats_json),
+    status: params.status as any,
+    created_at: now,
+    updated_at: now,
+  };
+  memoryStore.reviews.set(id, record);
+  return record;
+}
+
+export async function listReviews(): Promise<ReviewRecordDto[]> {
+  if (isTauriEnvironment()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return await invoke<ReviewRecordDto[]>('list_reviews');
+  }
+
+  return Array.from(memoryStore.reviews.values()).sort((a, b) => b.end_date.localeCompare(a.end_date));
 }

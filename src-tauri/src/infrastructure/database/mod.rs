@@ -122,6 +122,27 @@ impl Database {
             tx.commit()?;
         }
 
+        if current_version < 2 {
+            let tx = conn.transaction()?;
+            tx.execute_batch(
+                "CREATE TABLE reviews (
+                    id TEXT PRIMARY KEY,
+                    start_date TEXT NOT NULL,
+                    end_date TEXT NOT NULL,
+                    narrative TEXT NOT NULL,
+                    stats_json TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('draft', 'confirmed', 'stale')),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX idx_reviews_dates ON reviews(start_date, end_date);
+
+                INSERT INTO schema_migrations (version, applied_at)
+                VALUES (2, datetime('now'));"
+            )?;
+            tx.commit()?;
+        }
+
         Ok(())
     }
 
@@ -339,6 +360,13 @@ impl Database {
         // 自动清除当天的活动草稿（已正式入库）
         tx.execute("DELETE FROM drafts WHERE date = ?1", params![date])?;
 
+        // 标记涉及该日期的复盘为过期 (stale)
+        tx.execute(
+            "UPDATE reviews SET status = 'stale', updated_at = ?1
+             WHERE start_date <= ?2 AND end_date >= ?2 AND status = 'confirmed'",
+            params![now_str, date],
+        )?;
+
         tx.commit()?;
 
         // 返回完整聚合对象
@@ -473,8 +501,175 @@ impl Database {
 
     pub fn delete_entry(&self, id: &str) -> Result<bool, DomainError> {
         let conn = self.conn.lock().unwrap();
+        let date_opt: Option<String> = conn
+            .query_row("SELECT date FROM entries WHERE id = ?1", params![id], |r| r.get(0))
+            .optional()?;
+
         let rows_affected = conn.execute("DELETE FROM entries WHERE id = ?1", params![id])?;
+
+        if let Some(date) = date_opt {
+            let now_str = Utc::now().to_rfc3339();
+            let _ = conn.execute(
+                "UPDATE reviews SET status = 'stale', updated_at = ?1
+                 WHERE start_date <= ?2 AND end_date >= ?2 AND status = 'confirmed'",
+                params![now_str, date],
+            );
+        }
+
         Ok(rows_affected > 0)
+    }
+
+    pub fn get_entries_by_date_range(
+        &self,
+        start_date: &str,
+        end_date: &str,
+    ) -> Result<Vec<Entry>, DomainError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, date, raw_content, goal, status_category, reflection, created_at, updated_at, version
+             FROM entries
+             WHERE date >= ?1 AND date <= ?2
+             ORDER BY date ASC, created_at ASC",
+        )?;
+
+        let entry_rows = stmt.query_map(params![start_date, end_date], |row| {
+            let created_str: String = row.get(6)?;
+            let updated_str: String = row.get(7)?;
+            let created_at = DateTime::parse_from_rfc3339(&created_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+            let updated_at = DateTime::parse_from_rfc3339(&updated_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                created_at,
+                updated_at,
+                row.get::<_, i64>(8)?,
+            ))
+        })?;
+
+        let mut entries = Vec::new();
+        for r in entry_rows {
+            let (id, date, raw, goal, status, refld, created_at, updated_at, version) = r?;
+            let actions = self.fetch_actions(&conn, &id)?;
+            let positive_facts = self.fetch_positive_facts(&conn, &id)?;
+
+            entries.push(Entry {
+                id,
+                date,
+                raw_content: raw,
+                goal,
+                status_category: status,
+                reflection: refld,
+                created_at,
+                updated_at,
+                version,
+                actions,
+                positive_facts,
+            });
+        }
+
+        Ok(entries)
+    }
+
+    // ================= Review 接口 =================
+
+    pub fn save_review(
+        &self,
+        id: Option<&str>,
+        start_date: &str,
+        end_date: &str,
+        narrative: &str,
+        stats_json: &str,
+        status: &str,
+    ) -> Result<crate::domain::review::ReviewRecordDto, DomainError> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().to_rfc3339();
+        let review_id = id.map(|s| s.to_string()).unwrap_or_else(|| Uuid::new_v4().to_string());
+
+        let exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM reviews WHERE id = ?1)",
+                params![review_id],
+                |r| r.get(0),
+            )
+            .unwrap_or(false);
+
+        if exists {
+            conn.execute(
+                "UPDATE reviews
+                 SET start_date = ?1, end_date = ?2, narrative = ?3, stats_json = ?4, status = ?5, updated_at = ?6
+                 WHERE id = ?7",
+                params![start_date, end_date, narrative, stats_json, status, now, review_id],
+            )?;
+        } else {
+            conn.execute(
+                "INSERT INTO reviews (id, start_date, end_date, narrative, stats_json, status, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![review_id, start_date, end_date, narrative, stats_json, status, now, now],
+            )?;
+        }
+
+        let parsed_stats: crate::domain::review::ReviewStatsDto = serde_json::from_str(stats_json)
+            .map_err(|e| DomainError::ValidationError(format!("stats_json 解析失败: {}", e)))?;
+
+        Ok(crate::domain::review::ReviewRecordDto {
+            id: review_id,
+            start_date: start_date.to_string(),
+            end_date: end_date.to_string(),
+            narrative: narrative.to_string(),
+            stats: parsed_stats,
+            status: status.to_string(),
+            created_at: now.clone(),
+            updated_at: now,
+        })
+    }
+
+    pub fn list_reviews(&self) -> Result<Vec<crate::domain::review::ReviewRecordDto>, DomainError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, start_date, end_date, narrative, stats_json, status, created_at, updated_at
+             FROM reviews ORDER BY end_date DESC, created_at DESC",
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            let stats_json: String = row.get(4)?;
+            let parsed_stats = serde_json::from_str(&stats_json).unwrap_or(crate::domain::review::ReviewStatsDto {
+                total_entries_count: 0,
+                total_actions_count: 0,
+                total_known_minutes: 0,
+                unknown_duration_actions_count: 0,
+                approximate_actions_count: 0,
+                goals_breakdown: vec![],
+                confirmed_facts_count: 0,
+                confirmed_facts: vec![],
+                reflections_summary: vec![],
+            });
+
+            Ok(crate::domain::review::ReviewRecordDto {
+                id: row.get(0)?,
+                start_date: row.get(1)?,
+                end_date: row.get(2)?,
+                narrative: row.get(3)?,
+                stats: parsed_stats,
+                status: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+            })
+        })?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
     }
 
     fn fetch_actions(&self, conn: &Connection, entry_id: &str) -> Result<Vec<Action>, DomainError> {

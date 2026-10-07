@@ -114,4 +114,78 @@ export interface ExtractedDraftResult {
   reflection_prompt?: string | null;
 }
 
+// ============ 周复盘相关契约 ============
+
+export interface GoalAggregationDto {
+  goal_name: string;
+  action_count: number;
+  known_duration_minutes: number;
+  unknown_duration_count: number;
+}
+
+export interface ReviewFactItemDto {
+  fact_id: string;
+  entry_id: string;
+  date: string;
+  fact: string;
+  goal_ref?: string | null;
+}
+
+export interface ReviewReflectionItemDto {
+  entry_id: string;
+  date: string;
+  snippet: string;
+}
+
+export interface ReviewCitationDto {
+  entry_id: string;
+  date: string;
+  quote: string;
+}
+
+export interface ReviewStatsDto {
+  total_entries_count: number;
+  total_actions_count: number;
+  total_known_minutes: number;
+  unknown_duration_actions_count: number;
+  approximate_actions_count: number;
+  goals_breakdown: GoalAggregationDto[];
+  confirmed_facts_count: number;
+  confirmed_facts: ReviewFactItemDto[];
+  reflections_summary: ReviewReflectionItemDto[];
+}
+
+export interface ReviewDraftDto {
+  start_date: string;
+  end_date: string;
+  stats: ReviewStatsDto;
+  narrative: string;
+  citations: ReviewCitationDto[];
+}
+
+export interface ReviewRecordDto {
+  id: string;
+  start_date: string;
+  end_date: string;
+  narrative: string;
+  stats: ReviewStatsDto;
+  status: 'draft' | 'confirmed' | 'stale';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GenerateReviewDraftParams {
+  start_date: string;
+  end_date: string;
+}
+
+export interface SaveReviewRecordParams {
+  id?: string | null;
+  start_date: string;
+  end_date: string;
+  narrative: string;
+  stats_json: string;
+  status: string;
+}
+
 export type NavigationTab = 'recording' | 'entries' | 'reviews' | 'settings';

@@ -10,8 +10,8 @@
 | [01](01-bootstrap.md) | 桌面骨架与质量基线 | done | D01、基础平台确认 | 实际桌面启动、类型化桥接、检查命令 |
 | [02](02-local-recording.md) | 离线记录与可靠持久化 | done | 01、D02、D05 | 草稿恢复、记录详情、事务、最小备份 |
 | [03](03-guided-recording.md) | 对话、五栏与事实反馈 | done | 02、D05、D06 | Mock 引导与抽取、编辑确认、即时事实 |
-| [04](04-weekly-review.md) | 周报聚合与 A 档流程 | in-progress | 02；03 的数据契约、D06 | 可回查统计、Mock 初稿、确认与失效 |
-| [05](05-ai-privacy-quota.md) | 真实 AI、授权与额度 | planned | 03、04、D04、D07 | 获批模型、可撤销授权、透明额度 |
+| [04](04-weekly-review.md) | 周报聚合与 A 档流程 | done | 02；03 的数据契约、D06 | 可回查统计、Mock 初稿、确认与失效 |
+| [05](05-ai-privacy-quota.md) | 真实 AI、授权与额度 | in-progress | 03、04、D04、D07 | 获批模型、可撤销授权、透明额度 |
 | [06](06-data-lifecycle.md) | 导出删除与备份恢复加固 | planned | 02、04、D09 | 完整生命周期、迁移恢复、合成回归 |
 | [07](07-linux-release.md) | Linux 内测包与验收 | planned | 01–06、D03 | 实际验证的首包与发布说明 |
 | [08](08-p1-expansion.md) | P1 目标、月报、B/C、提醒 | deferred | P0 内测反馈、独立确认 | 根据数据选择的 P1 子计划 |

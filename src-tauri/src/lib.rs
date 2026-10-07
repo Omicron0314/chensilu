@@ -37,6 +37,9 @@ pub fn run() {
             commands::storage::restore_database,
             commands::ai::guided_chat,
             commands::ai::extract_five_columns,
+            commands::review::generate_review_draft,
+            commands::review::save_review_record,
+            commands::review::list_reviews,
         ])
         .run(tauri::generate_context!())
         .expect("运行 Tauri 桌面应用时发生错误");
