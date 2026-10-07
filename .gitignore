@@ -1,0 +1,29 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Dependencies and generated build output
+node_modules/
+dist/
+coverage/
+target/
+
+# Local runtime data: never commit real diaries or backups
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.log
+/runtime-data/
+/backups/
+/exports/
+
+# Local editor and OS state
+.idea/
+.DS_Store
+Thumbs.db
